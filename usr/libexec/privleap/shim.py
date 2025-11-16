@@ -28,6 +28,31 @@ from typing import Any
 
 import PAM  # type: ignore
 
+SAFE_ENV_VARS: set[str] = {
+    "LANG",
+    "LANGUAGE",
+    "LC_ALL",
+    "LC_COLLATE",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "LC_MONETARY",
+    "LC_NUMERIC",
+    "LC_TIME",
+    "TERM",
+    "TZ",
+}
+SAFE_ENV_PREFIXES: tuple[str, ...] = ("LC_",)
+DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+
+def _should_copy_env_var(key: str) -> bool:
+    if key in SAFE_ENV_VARS:
+        return True
+    for prefix in SAFE_ENV_PREFIXES:
+        if key.startswith(prefix):
+            return True
+    return False
+
 if len(sys.argv) < 5:
     sys.exit(255)
 
@@ -61,21 +86,34 @@ try:
 except Exception:
     pam_obj.setcred(PAM.PAM_DELETE_CRED | PAM.PAM_SILENT)
     sys.exit(255)
-pam_env_list: list[str] = pam_obj.getenvlist()
-
-action_env: dict[str, str] = os.environ.copy()
-action_env["HOME"] = target_user_info.pw_dir
-action_env["LOGNAME"] = target_user_info.pw_name
-action_env["SHELL"] = "/usr/bin/bash"
-action_env["PWD"] = target_user_info.pw_dir
-action_env["USER"] = target_user_info.pw_name
-for env_var in pam_env_list:
-    env_var_parts: list[str] = env_var.split("=", 1)
-    action_env[env_var_parts[0]] = env_var_parts[1]
+pam_env_list_raw: list[str] | None = pam_obj.getenvlist()
+pam_env_list: list[str] = pam_env_list_raw if pam_env_list_raw is not None else []
 
 target_cwd: str = target_user_info.pw_dir
 if not Path(target_cwd).is_dir():
     target_cwd = "/"
+
+action_env: dict[str, str] = {
+    "HOME": target_user_info.pw_dir,
+    "LOGNAME": target_user_info.pw_name,
+    "SHELL": "/usr/bin/bash",
+    "PWD": target_cwd,
+    "USER": target_user_info.pw_name,
+    "PATH": DEFAULT_PATH,
+}
+
+for key, value in os.environ.items():
+    if _should_copy_env_var(key):
+        action_env[key] = value
+
+for env_var in pam_env_list:
+    env_var_parts: list[str] = env_var.split("=", 1)
+    if len(env_var_parts) != 2:
+        continue
+    env_key: str = env_var_parts[0]
+    env_value: str = env_var_parts[1]
+    if _should_copy_env_var(env_key):
+        action_env[env_key] = env_value
 
 try:
     exit_code: int = subprocess.run(

@@ -74,6 +74,7 @@ class PrivleapdGlobal:
     action_list: list[PrivleapAction] = []
     persistent_user_list: list[str] = []
     allowed_user_list: list[str] = []
+    allowed_user_groups: list[str] = []
     expected_disallowed_user_list: list[str] = []
     socket_list: list[PrivleapSocket] = []
     pid_file_path: Path = Path(PrivleapCommon.state_dir, "pid")
@@ -111,6 +112,78 @@ def send_msg_safe(session: PrivleapSession, msg: PrivleapMsg) -> bool:
     return True
 
 
+def user_in_allowed_group(user_name: str) -> bool:
+    """Returns True if user_name currently belongs to an allowed group."""
+
+    try:
+        user_info: pwd.struct_passwd = pwd.getpwnam(user_name)
+    except KeyError:
+        return False
+
+    for group_name in PrivleapdGlobal.allowed_user_groups:
+        try:
+            group_info: grp.struct_group = grp.getgrnam(group_name)
+        except KeyError:
+            logging.warning(
+                "Configured allowed group '%s' no longer exists", group_name
+            )
+            continue
+        if user_info.pw_gid == group_info.gr_gid or user_name in group_info.gr_mem:
+            return True
+    return False
+
+
+def is_user_allowed(user_name: str) -> bool:
+    """Returns True if user_name is authorized to create a comm socket."""
+
+    if user_name in PrivleapdGlobal.allowed_user_list:
+        return True
+    return user_in_allowed_group(user_name)
+
+
+def prune_disallowed_comm_sockets() -> None:
+    """Close comm sockets that no longer have authorization."""
+
+    sockets_to_remove: list[PrivleapSocket] = []
+    for sock in PrivleapdGlobal.socket_list:
+        if sock.socket_type != PrivleapSocketType.COMMUNICATION:
+            continue
+        if sock.user_name is None:
+            continue
+        if sock.user_name in PrivleapdGlobal.persistent_user_list:
+            continue
+        if sock.user_name in PrivleapdGlobal.expected_disallowed_user_list:
+            sockets_to_remove.append(sock)
+            continue
+        if is_user_allowed(sock.user_name):
+            continue
+        sockets_to_remove.append(sock)
+
+    for sock in sockets_to_remove:
+        assert sock.user_name is not None
+        logging.info(
+            "Destroying comm socket for revoked account '%s'", sock.user_name
+        )
+        if sock.backend_socket is not None:
+            try:
+                sock.backend_socket.close()
+            except Exception as exc:
+                logging.warning(
+                    "Failed to close socket for account '%s'", sock.user_name,
+                    exc_info=exc,
+                )
+        socket_path = Path(PrivleapCommon.comm_dir, sock.user_name)
+        if socket_path.exists():
+            try:
+                socket_path.unlink()
+            except Exception as exc:
+                logging.warning(
+                    "Failed to unlink socket path '%s'", socket_path,
+                    exc_info=exc,
+                )
+        PrivleapdGlobal.socket_list.remove(sock)
+
+
 def handle_control_create_msg(
     control_session: PrivleapSession,
     control_msg: PrivleapControlClientCreateMsg,
@@ -141,7 +214,7 @@ def handle_control_create_msg(
         )
         return
 
-    if user_name not in PrivleapdGlobal.allowed_user_list:
+    if not is_user_allowed(user_name):
         logging.warning(
             "Account '%s' is not allowed to have a comm socket", user_name
         )
@@ -754,6 +827,25 @@ def handle_comm_session(comm_socket: PrivleapSocket) -> None:
         return
 
     try:
+        if comm_socket.user_uid is not None:
+            peer_uid: int | None = comm_session.get_peer_uid()
+            if peer_uid is None:
+                logging.warning(
+                    "Rejecting connection on socket for '%s': could not "
+                    "determine peer credentials",
+                    comm_socket.user_name,
+                )
+                return
+            if peer_uid != comm_socket.user_uid:
+                logging.warning(
+                    "Rejecting connection on socket for '%s': expected uid %d "
+                    "but peer is %d",
+                    comm_socket.user_name,
+                    comm_socket.user_uid,
+                    peer_uid,
+                )
+                return
+
         comm_msg: (
             PrivleapCommClientSignalMsg
             | PrivleapCommClientAccessCheckMsg
@@ -884,6 +976,7 @@ def parse_config_file(
     temp_action_list: list[PrivleapAction],
     temp_persistent_user_list: list[str],
     temp_allowed_user_list: list[str],
+    temp_allowed_group_list: list[str],
     temp_expected_disallowed_user_list: list[str],
 ) -> bool:
     """
@@ -894,6 +987,7 @@ def parse_config_file(
     action_arr: list[PrivleapAction]
     persistent_user_arr: list[str]
     allowed_user_arr: list[str]
+    allowed_group_arr: list[str]
     expected_disallowed_user_arr: list[str]
 
     config_result = PrivleapCommon.parse_config_file(config_file)
@@ -906,7 +1000,8 @@ def parse_config_file(
     action_arr = config_result[0]
     persistent_user_arr = config_result[1]
     allowed_user_arr = config_result[2]
-    expected_disallowed_user_arr = config_result[3]
+    allowed_group_arr = config_result[3]
+    expected_disallowed_user_arr = config_result[4]
     duplicate_action_name: str | None = extend_action_list(
         action_arr, temp_action_list
     )
@@ -928,6 +1023,8 @@ def parse_config_file(
         # defined, we just skip over the duplicates.
     for allowed_user_item in allowed_user_arr:
         append_if_not_in(allowed_user_item, temp_allowed_user_list)
+    for allowed_group_item in allowed_group_arr:
+        append_if_not_in(allowed_group_item, temp_allowed_group_list)
     for expected_disallowed_user_item in expected_disallowed_user_arr:
         append_if_not_in(
             expected_disallowed_user_item, temp_expected_disallowed_user_list
@@ -950,6 +1047,7 @@ def parse_config_files() -> bool:
     temp_action_list: list[PrivleapAction] = []
     temp_persistent_user_list: list[str] = []
     temp_allowed_user_list: list[str] = []
+    temp_allowed_group_list: list[str] = []
     temp_expected_disallowed_user_list: list[str] = []
 
     for config_file in config_file_list:
@@ -967,6 +1065,7 @@ def parse_config_files() -> bool:
                 temp_action_list,
                 temp_persistent_user_list,
                 temp_allowed_user_list,
+                temp_allowed_group_list,
                 temp_expected_disallowed_user_list,
             ):
                 return False
@@ -978,9 +1077,11 @@ def parse_config_files() -> bool:
     PrivleapdGlobal.action_list = temp_action_list
     PrivleapdGlobal.persistent_user_list = temp_persistent_user_list
     PrivleapdGlobal.allowed_user_list = temp_allowed_user_list
+    PrivleapdGlobal.allowed_user_groups = temp_allowed_group_list
     PrivleapdGlobal.expected_disallowed_user_list = (
         temp_expected_disallowed_user_list
     )
+    prune_disallowed_comm_sockets()
     return True
 
 
