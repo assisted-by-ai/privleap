@@ -15,6 +15,7 @@ privleap.py - Backend library for privleap clients and servers.
 """
 
 import socket
+import struct
 import os
 import stat
 import pwd
@@ -467,6 +468,24 @@ class PrivleapSession:
 
         self.is_control_session = is_control_session
         self.is_session_open = True
+
+    def get_peer_uid(self) -> int | None:
+        """Return the UID of the remote peer when running server-side."""
+
+        if not self.is_server_side:
+            return None
+        if self.backend_socket is None:
+            return None
+        if not hasattr(socket, "SO_PEERCRED"):
+            return None
+        try:
+            creds: bytes = self.backend_socket.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+            )
+        except OSError:
+            return None
+        _, peer_uid, _ = struct.unpack("3i", creds)
+        return peer_uid
 
     def __recv_msg(self) -> bytes:
         """
@@ -928,6 +947,7 @@ class PrivleapSocket:
         self.backend_socket: socket.socket | None = None
         self.socket_type: PrivleapSocketType | None = None
         self.user_name: str | None = None
+        self.user_uid: int | None = None
 
         if socket_type == PrivleapSocketType.CONTROL:
             if user_name is not None:
@@ -968,6 +988,7 @@ class PrivleapSocket:
             os.chmod(socket_path, stat.S_IRUSR | stat.S_IWUSR)
             self.backend_socket.listen(10)
             self.user_name = user_name
+            self.user_uid = target_uid
 
         self.socket_type = socket_type
 
@@ -1060,6 +1081,11 @@ class PrivleapAction:
                     continue
                 self.auth_groups.append(auth_group)
 
+        if len(self.auth_users) == 0 and len(self.auth_groups) == 0:
+            raise ValueError(
+                "No valid authorized users or groups remain after normalization"
+            )
+
         if target_user is not None:
             orig_target_user: str = target_user
             target_user = PrivleapCommon.normalize_user_id(target_user)
@@ -1072,7 +1098,7 @@ class PrivleapAction:
 
         if target_group is not None:
             orig_target_group: str = target_group
-            target_group = PrivleapCommon.normalize_user_id(target_group)
+            target_group = PrivleapCommon.normalize_group_id(target_group)
             if target_group is None:
                 raise ValueError(
                     f"Group '{orig_target_group}' specified by field "
@@ -1087,7 +1113,11 @@ class PrivleapAction:
 
 
 ConfigData: TypeAlias = Tuple[
-    list[PrivleapAction], list[str], list[str], list[str]
+    list[PrivleapAction],
+    list[str],
+    list[str],
+    list[str],
+    list[str],
 ]
 
 
@@ -1418,20 +1448,11 @@ class PrivleapCommon:
                 )
             )
 
-        for group in allowed_user_groups_list:
-            group_info: grp.struct_group = grp.getgrnam(group)
-            for user_name in group_info.gr_mem:
-                if user_name not in allowed_user_output_list:
-                    allowed_user_output_list.append(user_name)
-            for user in pwd.getpwall():
-                if user.pw_gid == group_info.gr_gid:
-                    if user.pw_name not in allowed_user_output_list:
-                        allowed_user_output_list.append(user.pw_name)
-
         return (
             action_output_list,
             persistent_user_output_list,
             allowed_user_output_list,
+            allowed_user_groups_list,
             expected_disallowed_user_output_list,
         )
 
