@@ -45,6 +45,21 @@ SAFE_ENV_PREFIXES: tuple[str, ...] = ("LC_",)
 DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
+def _get_supplementary_groups(user_name: str, primary_gid: int) -> list[int]:
+    """Return the supplementary groups configured for user_name."""
+
+    group_id_list: list[int]
+    try:
+        group_id_list = os.getgrouplist(user_name, primary_gid)
+    except (AttributeError, OSError):
+        group_id_list = [primary_gid]
+        for group in grp.getgrall():
+            if user_name in group.gr_mem and group.gr_gid not in group_id_list:
+                group_id_list.append(group.gr_gid)
+
+    return [gid for gid in group_id_list if gid != primary_gid]
+
+
 def _should_copy_env_var(key: str) -> bool:
     if key in SAFE_ENV_VARS:
         return True
@@ -93,6 +108,10 @@ target_cwd: str = target_user_info.pw_dir
 if not Path(target_cwd).is_dir():
     target_cwd = "/"
 
+supplementary_groups: list[int] = _get_supplementary_groups(
+    target_user_info.pw_name, target_user_info.pw_gid
+)
+
 action_env: dict[str, str] = {
     "HOME": target_user_info.pw_dir,
     "LOGNAME": target_user_info.pw_name,
@@ -121,6 +140,7 @@ try:
         stdin=subprocess.DEVNULL,
         user=target_user,
         group=target_group,
+        extra_groups=supplementary_groups,
         env=action_env,
         cwd=target_cwd,
         check=False,
