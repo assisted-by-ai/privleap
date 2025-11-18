@@ -22,6 +22,7 @@ import subprocess
 import re
 import logging
 import time
+import stat
 from enum import Enum
 from pathlib import Path
 from typing import Tuple, cast, SupportsIndex, NoReturn, Any
@@ -996,6 +997,65 @@ def append_if_not_in(item: Any, item_list: list[Any]) -> None:
         item_list.append(item)
 
 
+def report_config_security_error(error_msg: str) -> None:
+    """Log or print configuration security errors consistently."""
+
+    if PrivleapdGlobal.check_config_mode:
+        print(error_msg, file=sys.stderr)
+    else:
+        logging.critical(error_msg)
+
+
+def ensure_path_is_secure(
+    path: Path,
+    description: str,
+    *,
+    require_directory: bool = False,
+    require_regular_file: bool = False,
+) -> bool:
+    """Verify that a path is owned by root and not writable by others."""
+
+    try:
+        path_stat: os.stat_result = path.lstat()
+    except FileNotFoundError:
+        report_config_security_error(
+            f"{description} '{path}' does not exist or is inaccessible"
+        )
+        return False
+    except OSError as exc:
+        report_config_security_error(
+            f"Could not stat {description.lower()} '{path}': {exc}"
+        )
+        return False
+
+    if stat.S_ISLNK(path_stat.st_mode):
+        report_config_security_error(
+            f"{description} '{path}' must not be a symlink"
+        )
+        return False
+    if require_directory and not stat.S_ISDIR(path_stat.st_mode):
+        report_config_security_error(
+            f"{description} '{path}' is not a directory"
+        )
+        return False
+    if require_regular_file and not stat.S_ISREG(path_stat.st_mode):
+        report_config_security_error(
+            f"{description} '{path}' is not a regular file"
+        )
+        return False
+    if path_stat.st_uid != 0:
+        report_config_security_error(
+            f"{description} '{path}' must be owned by root"
+        )
+        return False
+    if path_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        report_config_security_error(
+            f"{description} '{path}' must not be group- or world-writable"
+        )
+        return False
+    return True
+
+
 def extend_action_list(
     action_arr: list[PrivleapAction], target_arr: list[PrivleapAction]
 ) -> str | None:
@@ -1084,11 +1144,28 @@ def parse_config_files() -> bool:
     Parses all config files under /etc/privleap/conf.d.
     """
 
+    if not ensure_path_is_secure(
+        PrivleapdGlobal.config_dir,
+        "Configuration directory",
+        require_directory=True,
+    ):
+        return False
+
     config_file_list: list[Path] = []
-    for config_file in PrivleapdGlobal.config_dir.iterdir():
-        if not config_file.is_file():
-            continue
-        config_file_list.append(config_file)
+    try:
+        for config_file in PrivleapdGlobal.config_dir.iterdir():
+            if not config_file.is_file():
+                continue
+            if not ensure_path_is_secure(
+                config_file, "Configuration file", require_regular_file=True
+            ):
+                return False
+            config_file_list.append(config_file)
+    except OSError as exc:
+        report_config_security_error(
+            f"Could not enumerate configuration directory '{PrivleapdGlobal.config_dir}': {exc}"
+        )
+        return False
     config_file_list.sort()
 
     temp_action_list: list[PrivleapAction] = []

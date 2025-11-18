@@ -81,3 +81,20 @@ in Debian are upgraded, or it may end up improperly built if you interrupt
 reason you need to rebuild this tarball from scratch before running the next
 test, run `run_autopkgtest --reset-tarball`. This will delete the tarball
 and regenerate it, then run the tests as usual.
+
+### Verifying PAM environment inheritance
+
+The `test/pam_env_inheritance_test.sh` helper builds a temporary PAM service,
+creates disposable users, and shows exactly which `pam_env` values are fed
+into a privleap session. This makes it easy to confirm that pam_env always
+pulls variables from the *target* account (not the calling user) and therefore
+cannot be abused to inject loader variables such as `LD_PRELOAD` into root
+actions.
+
+```
+sudo ./test/pam_env_inheritance_test.sh
+```
+
+The script prints the PAM-provided environment, fails if any caller-provided
+variable leaks through, and reports success once it proves that only the
+target user's pam_env entries are applied.

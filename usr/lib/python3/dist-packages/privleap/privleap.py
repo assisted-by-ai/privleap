@@ -20,6 +20,7 @@ import stat
 import pwd
 import grp
 import re
+import struct
 from pathlib import Path
 from typing import Tuple, TypeAlias
 from enum import Enum
@@ -928,6 +929,7 @@ class PrivleapSocket:
         self.backend_socket: socket.socket | None = None
         self.socket_type: PrivleapSocketType | None = None
         self.user_name: str | None = None
+        self.user_uid: int | None = None
 
         if socket_type == PrivleapSocketType.CONTROL:
             if user_name is not None:
@@ -968,6 +970,7 @@ class PrivleapSocket:
             os.chmod(socket_path, stat.S_IRUSR | stat.S_IWUSR)
             self.backend_socket.listen(10)
             self.user_name = user_name
+            self.user_uid = target_uid
 
         self.socket_type = socket_type
 
@@ -982,13 +985,39 @@ class PrivleapSocket:
         # socket.accept returns a (socket, address) tuple, we only need the
         # socket from this
         session_socket: socket.socket = self.backend_socket.accept()[0]
-        if self.socket_type == PrivleapSocketType.CONTROL:
-            return PrivleapSession(session_socket, is_control_session=True)
+        try:
+            if self.socket_type == PrivleapSocketType.CONTROL:
+                self.__validate_peer_uid(session_socket, 0)
+                return PrivleapSession(session_socket, is_control_session=True)
 
-        assert self.user_name is not None
-        return PrivleapSession(
-            session_socket, user_name=self.user_name, is_control_session=False
+            assert self.user_name is not None
+            assert self.user_uid is not None
+            self.__validate_peer_uid(session_socket, self.user_uid)
+            return PrivleapSession(
+                session_socket, user_name=self.user_name, is_control_session=False
+            )
+        except Exception:
+            session_socket.close()
+            raise
+
+    @staticmethod
+    def __validate_peer_uid(session_socket: socket.socket, expected_uid: int) -> None:
+        """
+        Ensures that the connecting peer's UID matches the expected UID.
+        """
+
+        if not hasattr(socket, "SO_PEERCRED"):
+            raise PermissionError("Peer credential verification is unavailable")
+
+        cred_size: int = struct.calcsize("3i")
+        raw_creds: bytes = session_socket.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, cred_size
         )
+        (_, peer_uid, _) = struct.unpack("3i", raw_creds)
+        if peer_uid != expected_uid:
+            raise PermissionError(
+                f"Peer UID {peer_uid} does not match expected UID {expected_uid}"
+            )
 
 
 class PrivleapAction:
