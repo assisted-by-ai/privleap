@@ -715,15 +715,10 @@ def auth_signal_request(
         comm_msg,
         (PrivleapCommClientSignalMsg, PrivleapCommClientAccessCheckMsg),
     )
-    # The auth code attempts to NOT allow a client to tell the difference
-    # between an action that doesn't exist, and one that does exist but that
-    # they aren't allowed to execute. If authentication fails or the action
-    # doesn't exist, we make sure the server takes as close to 3 seconds to
-    # reply as possible. If we wanted to cloak this list even better, we
-    # could busy-wait rather than sleeping to avoid processor load acting
-    # as a side-channel, but that would potentially allow DoS attacks which
-    # are probably a bigger threat.
-    auth_start_time: float = time.monotonic()
+    # The auth code intentionally returns the same UNAUTHORIZED message whether
+    # the action does not exist or the caller simply lacks permission. Relying
+    # on identical responses avoids revealing additional information while
+    # keeping the daemon responsive.
     desired_action: PrivleapAction | None = lookup_desired_action(
         comm_msg.signal_name
     )
@@ -757,10 +752,6 @@ def auth_signal_request(
                     comm_session.user_name,
                     desired_action.action_name,
                 )
-        auth_end_time: float = auth_start_time + 3
-        auth_fail_sleep_time: float = auth_end_time - auth_start_time
-        if auth_fail_sleep_time > 0:
-            time.sleep(auth_fail_sleep_time)
         send_msg_safe(comm_session, PrivleapCommServerUnauthorizedMsg())
         return None
 

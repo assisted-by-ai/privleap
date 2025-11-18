@@ -1888,9 +1888,6 @@ def privleapd_send_nonexistent_signal_and_bail_test(bogus: str) -> bool:
             quiet=i != 4,
         ):
             part1_passed = True
-        # privleapd waits about 3 seconds before sending the UNAUTHORIZED
-        # message for security reasons
-        time.sleep(3)
         if compare_privleapd_stderr(
             PlTestData.unauthorized_broken_pipe_lines, quiet=i != 4
         ):
@@ -1927,9 +1924,6 @@ def privleapd_send_userrestrict_signal_and_bail_test(bogus: str) -> bool:
             quiet=i != 4,
         ):
             part1_passed = True
-        # privleapd waits about 3 seconds before sending the UNAUTHORIZED
-        # message for security reasons
-        time.sleep(3)
         if compare_privleapd_stderr(
             PlTestData.unauthorized_broken_pipe_lines, quiet=i != 4
         ):
@@ -1966,9 +1960,6 @@ def privleapd_send_grouprestrict_signal_and_bail_test(bogus: str) -> bool:
             quiet=i != 4,
         ):
             part1_passed = True
-        # privleapd waits about 3 seconds before sending the UNAUTHORIZED
-        # message for security reasons
-        time.sleep(3)
         if compare_privleapd_stderr(
             PlTestData.unauthorized_broken_pipe_lines, quiet=i != 4
         ):
