@@ -654,9 +654,9 @@ class PrivleapSession:
         While there aren't security issues with doing so, you probably shouldn't
         use __recv_msg_cautious() on the client. It may result in a disconnect
         while the server is still trying to send data to the client. It bails
-        out if a read times out, or if it takes more than five combined loop
-        iterations to read a message (thus giving at most ~0.5 seconds for the
-        client to send a whole message).
+        out if a read times out, or if it takes more than five loop iterations
+        to read the header or body (thus giving at most ~0.5 seconds for each
+        phase of message reception).
         """
 
         assert self.backend_socket is not None
@@ -685,6 +685,7 @@ class PrivleapSession:
             if msg_len > 4096:
                 raise ValueError("Received message is too long")
 
+        max_loops = 5
         recv_buf = b""
 
         while len(recv_buf) != msg_len:
