@@ -1048,7 +1048,11 @@ class PrivleapSocket:
                     "PrivleapSocketType.COMMUNICATION"
                 )
             self.backend_socket = socket.socket(family=socket.AF_UNIX)
-            self.backend_socket.bind(str(PrivleapCommon.control_path))
+            old_umask = os.umask(0o177)
+            try:
+                self.backend_socket.bind(str(PrivleapCommon.control_path))
+            finally:
+                os.umask(old_umask)
             os.chown(PrivleapCommon.control_path, 0, 0)
             os.chmod(PrivleapCommon.control_path, stat.S_IRUSR | stat.S_IWUSR)
             self.backend_socket.listen(10)
@@ -1075,7 +1079,11 @@ class PrivleapSocket:
 
             self.backend_socket = socket.socket(family=socket.AF_UNIX)
             socket_path = Path(PrivleapCommon.comm_dir, user_name)
-            self.backend_socket.bind(str(socket_path))
+            old_umask = os.umask(0o177)
+            try:
+                self.backend_socket.bind(str(socket_path))
+            finally:
+                os.umask(old_umask)
             os.chown(socket_path, target_uid, target_gid)
             os.chmod(socket_path, stat.S_IRUSR | stat.S_IWUSR)
             self.backend_socket.listen(10)

@@ -1394,13 +1394,27 @@ def parse_config_files() -> bool:
                     str(config_dir),
                 )
             continue
-        if not PrivleapCommon.check_secure_file_permissions(str(config_dir)):
+        try:
+            config_dir_fd: int = os.open(
+                str(config_dir), os.O_RDONLY | os.O_DIRECTORY
+            )
+        except OSError as e:
             logging.warning(
-                "Config directory '%s' exists but has insecure permissions, "
-                "ignoring all files in this directory.",
+                "Config directory '%s' could not be opened, skipping.",
                 str(config_dir),
+                exc_info=e,
             )
             continue
+        try:
+            if not PrivleapCommon.check_secure_file_permissions(config_dir_fd):
+                logging.warning(
+                    "Config directory '%s' exists but has insecure "
+                    "permissions, ignoring all files in this directory.",
+                    str(config_dir),
+                )
+                continue
+        finally:
+            os.close(config_dir_fd)
 
         for config_file in config_dir.iterdir():
             if not config_file.is_file() or not config_file.name.endswith(
@@ -1482,7 +1496,7 @@ def populate_state_dir() -> None:
     if not PrivleapCommon.state_dir.exists():
         try:
             PrivleapCommon.state_dir.mkdir(parents=True)
-            PrivleapCommon.state_dir.chmod(0o755)
+            PrivleapCommon.state_dir.chmod(0o711)
         except Exception as e:
             logging.critical(
                 "Cannot create '%s'!",
@@ -1500,7 +1514,7 @@ def populate_state_dir() -> None:
     if not PrivleapCommon.comm_dir.exists():
         try:
             PrivleapCommon.comm_dir.mkdir(parents=True)
-            PrivleapCommon.comm_dir.chmod(0o755)
+            PrivleapCommon.comm_dir.chmod(0o711)
         except Exception as e:
             logging.critical(
                 "Cannot create '%s'!",

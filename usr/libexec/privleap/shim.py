@@ -77,18 +77,22 @@ except Exception:
     sys.exit(255)
 os.umask(init_umask_int)
 
-pam_obj: Any = PAM.pam()
-pam_obj.start("privleapd")
-pam_obj.set_item(PAM.PAM_USER, calling_user)
-pam_obj.set_item(PAM.PAM_RUSER, calling_user)
+pam_acct_obj: Any = PAM.pam()
+pam_acct_obj.start("privleapd")
+pam_acct_obj.set_item(PAM.PAM_USER, calling_user)
+pam_acct_obj.set_item(PAM.PAM_RUSER, calling_user)
 try:
-    pam_obj.acct_mgmt()
+    pam_acct_obj.acct_mgmt()
 except PAM.error as e:
     if e.args[1] == PAM.PAM_NEW_AUTHTOK_REQD:
         pass
     else:
         sys.exit(255)
+
+pam_obj: Any = PAM.pam()
+pam_obj.start("privleapd")
 pam_obj.set_item(PAM.PAM_USER, target_user)
+pam_obj.set_item(PAM.PAM_RUSER, calling_user)
 pam_obj.setcred(PAM.PAM_REINITIALIZE_CRED)
 try:
     pam_obj.open_session()
