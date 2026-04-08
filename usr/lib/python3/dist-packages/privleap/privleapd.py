@@ -426,26 +426,22 @@ def destroy_comm_socket(
         sock: PrivleapSocket = sock_info.listen_socket
         if sock.user_name == real_user_name:
             socket_path: Path = Path(PrivleapCommon.comm_dir, real_user_name)
-            if socket_path.exists():
-                try:
-                    socket_path.unlink()
-                except Exception as e:
-                    ## Probably just a TOCTOU issue, i.e. someone already
-                    ## removed the socket. Most likely caused by the user
-                    ## fiddling with things, no big deal.
-                    logging.error(
-                        "Destroying comm socket for account '%s', failed to "
-                        "delete UNIX socket at '%s'",
-                        real_user_name,
-                        str(socket_path),
-                        exc_info=e,
-                    )
-            else:
+            try:
+                socket_path.unlink()
+            except FileNotFoundError:
                 logging.warning(
                     "Destroying comm socket for account '%s', no UNIX socket "
                     "to delete at '%s'",
                     real_user_name,
                     str(socket_path),
+                )
+            except Exception as e:
+                logging.error(
+                    "Destroying comm socket for account '%s', failed to "
+                    "delete UNIX socket at '%s'",
+                    real_user_name,
+                    str(socket_path),
+                    exc_info=e,
                 )
             remove_sock_idx = sock_idx
             break
@@ -1439,7 +1435,7 @@ def parse_config_files() -> bool:
             continue
 
         if not PrivleapCommon.validate_id(
-            str(config_file), PrivleapValidateType.CONFIG_FILE
+            config_file.name, PrivleapValidateType.CONFIG_FILE
         ):
             logging.warning(
                 "Config file '%s' has an illegal name, skipping.",
