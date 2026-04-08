@@ -1226,9 +1226,9 @@ class PrivleapCommon:
     state_dir: Path = Path("/run/privleapd")
     control_path: Path = Path(state_dir, "control")
     comm_dir: Path = Path(state_dir, "comm")
-    config_file_regex: re.Pattern[str] = re.compile(r"[-A-Za-z0-9_./]+\.conf\Z")
+    config_file_regex: re.Pattern[str] = re.compile(r"[-A-Za-z0-9_]+\.conf\Z")
     user_name_regex: re.Pattern[str] = re.compile(r"[a-z_][-a-z0-9_]*\$?\Z")
-    uid_regex: re.Pattern[str] = re.compile(r"[0-9]+")
+    uid_regex: re.Pattern[str] = re.compile(r"[0-9]+\Z")
     signal_name_regex: re.Pattern[str] = re.compile(r"[-A-Za-z0-9_.]+\Z")
     msg_arg_blob_data: dict[str, tuple[int, int, bool]] = {
         "CREATE": (1, 1, False),
